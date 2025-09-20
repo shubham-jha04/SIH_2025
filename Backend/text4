@@ -1,0 +1,569 @@
+import { useEffect, useRef, useState } from "react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Search, MapPin, Layers, Info, Navigation } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+// Fix for default markers in Leaflet with Vite
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
+const MapView = () => {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<L.Map | null>(null);
+  const coordinateMarker = useRef<L.Marker | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
+
+  // India's approximate center coordinates
+  const INDIA_CENTER: [number, number] = [20.5937, 78.9629];
+  const INDIA_ZOOM = 5;
+
+  // Load and filter India boundary from countries.geojson
+  const loadIndiaBoundary = async (map: L.Map) => {
+    try {
+      const response = await fetch('/geo/countries.geojson');
+      const data = await response.json();
+      
+      // Find India in the countries data
+      const indiaFeature = data.features.find((feature: any) => 
+        feature.properties.NAME === 'India' || 
+        feature.properties.name === 'India' ||
+        feature.properties.ADMIN === 'India'
+      );
+
+      if (indiaFeature) {
+        L.geoJSON(indiaFeature, {
+          style: {
+            color: 'hsl(var(--primary))',
+            weight: 3,
+            opacity: 0.8,
+            fillOpacity: 0.1
+          }
+        }).addTo(map);
+      }
+    } catch (error) {
+      console.error('Error loading India boundary:', error);
+      // Fallback to simplified boundary
+      const indiaBoundary = {
+        "type": "Feature",
+        "properties": { "name": "India" },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[
+            [68.176645, 7.96553], [97.395555, 7.96553],
+            [97.395555, 35.49401], [68.176645, 35.49401],
+            [68.176645, 7.96553]
+          ]]
+        }
+      };
+      
+      L.geoJSON(indiaBoundary as any, {
+        style: {
+          color: 'hsl(var(--primary))',
+          weight: 2,
+          opacity: 0.8,
+          fillOpacity: 0.1
+        }
+      }).addTo(map);
+    }
+  };
+
+  // Load Indian states boundaries
+  const loadIndianStates = async (map: L.Map) => {
+    try {
+      const response = await fetch('/geo/states-provinces.geojson');
+      const data = await response.json();
+      
+      // Filter for Indian states
+      const indianStates = data.features.filter((feature: any) => 
+        feature.properties.admin === 'India' || 
+        feature.properties.ADMIN === 'India' ||
+        feature.properties.iso_a2 === 'IN'
+      );
+
+      if (indianStates.length > 0) {
+        L.geoJSON(indianStates, {
+          style: {
+            color: 'hsl(var(--primary))',
+            weight: 1,
+            opacity: 0.6,
+            fillOpacity: 0.05
+          },
+          onEachFeature: (feature, layer) => {
+            const stateName = feature.properties.name || feature.properties.NAME || 'Unknown State';
+            layer.bindPopup(`<div class="p-2"><h3 class="font-bold">${stateName}</h3></div>`);
+          }
+        }).addTo(map);
+      }
+    } catch (error) {
+      console.error('Error loading Indian states:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!mapRef.current || mapInstance.current) return;
+
+    // Initialize map with India center
+    const map = L.map(mapRef.current).setView(INDIA_CENTER, INDIA_ZOOM);
+
+    // Add MapTiler tile layer with provided API key
+    L.tileLayer('https://api.maptiler.com/maps/darkmatter/{z}/{x}/{y}.png?key=optnG9Th5mJtIwTcUvI3', {
+      attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright/">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(map);
+
+    // Load real India boundaries
+    loadIndiaBoundary(map);
+    loadIndianStates(map);
+
+    // Add some sample data points (in a real app, this would come from uploaded data)
+    const sampleDataPoints = [
+      { lat: 28.6139, lng: 77.2090, city: "New Delhi", pollution: "High", metal: "Lead" },
+      { lat: 19.0760, lng: 72.8777, city: "Mumbai", pollution: "Medium", metal: "Arsenic" },
+      { lat: 13.0827, lng: 80.2707, city: "Chennai", pollution: "Low", metal: "Cadmium" },
+      { lat: 22.5726, lng: 88.3639, city: "Kolkata", pollution: "High", metal: "Mercury" },
+      { lat: 12.9716, lng: 77.5946, city: "Bangalore", pollution: "Medium", metal: "Lead" },
+    ];
+
+    sampleDataPoints.forEach(point => {
+      const color = point.pollution === 'High' ? '#ef4444' : 
+                   point.pollution === 'Medium' ? '#f59e0b' : '#10b981';
+      
+      const marker = L.circleMarker([point.lat, point.lng], {
+        radius: 8,
+        fillColor: color,
+        color: '#fff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.8
+      }).addTo(map);
+
+      marker.bindPopup(`
+        <div class="p-2">
+          <h3 class="font-bold">${point.city}</h3>
+          <p><strong>Metal:</strong> ${point.metal}</p>
+          <p><strong>Pollution Level:</strong> ${point.pollution}</p>
+        </div>
+      `);
+    });
+
+    mapInstance.current = map;
+
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
+  }, []);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      toast({
+        title: "Enter search query",
+        description: "Please enter a state, city, district, or coordinates to search.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      // First try to search in Indian states
+      const response = await fetch('/geo/states-provinces.geojson');
+      const data = await response.json();
+      
+      const query = searchQuery.toLowerCase();
+      const indianStates = data.features.filter((feature: any) => 
+        feature.properties.admin === 'India' || 
+        feature.properties.ADMIN === 'India' ||
+        feature.properties.iso_a2 === 'IN'
+      );
+
+      // Find matching state
+      const matchingState = indianStates.find((feature: any) => {
+        const stateName = (feature.properties.name || feature.properties.NAME || '').toLowerCase();
+        return stateName.includes(query) || query.includes(stateName);
+      });
+
+      if (matchingState && mapInstance.current) {
+        // Get bounds of the state
+        const geoJsonLayer = L.geoJSON(matchingState);
+        const bounds = geoJsonLayer.getBounds();
+        mapInstance.current.fitBounds(bounds, { padding: [20, 20] });
+
+        // Highlight the state
+        const highlightLayer = L.geoJSON(matchingState, {
+          style: {
+            color: 'hsl(var(--destructive))',
+            weight: 3,
+            opacity: 0.9,
+            fillOpacity: 0.2
+          }
+        }).addTo(mapInstance.current);
+
+        // Remove highlight after 3 seconds
+        setTimeout(() => {
+          mapInstance.current?.removeLayer(highlightLayer);
+        }, 3000);
+
+        const stateName = matchingState.properties.name || matchingState.properties.NAME;
+        toast({
+          title: "State found",
+          description: `Zoomed to ${stateName}`,
+        });
+      } else {
+        // Fallback to sample search results for cities
+        const searchResults: { [key: string]: [number, number] } = {
+          "delhi": [28.6139, 77.2090],
+          "mumbai": [19.0760, 72.8777],
+          "chennai": [13.0827, 80.2707],
+          "kolkata": [22.5726, 88.3639],
+          "bangalore": [12.9716, 77.5946],
+          "rajasthan": [27.0238, 74.2179],
+          "gujarat": [23.0225, 72.5714],
+          "maharashtra": [19.7515, 75.7139],
+          "karnataka": [15.3173, 75.7139],
+          "tamil nadu": [11.1271, 78.6569],
+          "west bengal": [22.9868, 87.8550],
+          "uttar pradesh": [26.8467, 80.9462],
+        };
+
+        const coordinates = searchResults[query];
+
+        if (coordinates && mapInstance.current) {
+          mapInstance.current.setView(coordinates, 8);
+          
+          // Add a temporary search marker
+          const searchMarker = L.marker(coordinates).addTo(mapInstance.current);
+          searchMarker.bindPopup(`<div class="p-2"><h3 class="font-bold">Search Result: ${searchQuery}</h3></div>`).openPopup();
+
+          toast({
+            title: "Location found",
+            description: `Zoomed to ${searchQuery}`,
+          });
+        } else {
+          toast({
+            title: "Location not found",
+            description: "Please try searching for a major Indian city or state.",
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error) {
+      toast({
+        title: "Search failed",
+        description: "There was an error searching for the location.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCoordinateSubmit = () => {
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      toast({
+        title: "Invalid coordinates",
+        description: "Please enter valid latitude and longitude values.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (lat < -90 || lat > 90) {
+      toast({
+        title: "Invalid latitude",
+        description: "Latitude must be between -90 and 90 degrees.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (lng < -180 || lng > 180) {
+      toast({
+        title: "Invalid longitude", 
+        description: "Longitude must be between -180 and 180 degrees.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!mapInstance.current) return;
+
+    // Remove existing coordinate marker if any
+    if (coordinateMarker.current) {
+      mapInstance.current.removeLayer(coordinateMarker.current);
+    }
+
+    // Smooth fly to coordinates
+    mapInstance.current.flyTo([lat, lng], 10, {
+      animate: true,
+      duration: 1.5
+    });
+
+    // Add marker at the coordinates
+    coordinateMarker.current = L.marker([lat, lng], {
+      icon: L.icon({
+        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+      })
+    }).addTo(mapInstance.current);
+
+    coordinateMarker.current.bindPopup(`
+      <div class="p-2">
+        <h3 class="font-bold">Custom Location</h3>
+        <p><strong>Latitude:</strong> ${lat.toFixed(6)}</p>
+        <p><strong>Longitude:</strong> ${lng.toFixed(6)}</p>
+      </div>
+    `).openPopup();
+
+    toast({
+      title: "Location found",
+      description: `Moved to coordinates: ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+    });
+  };
+
+  const getUserLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          setLatitude(lat.toString());
+          setLongitude(lng.toString());
+          
+          if (mapInstance.current) {
+            mapInstance.current.flyTo([lat, lng], 12, {
+              animate: true,
+              duration: 1.5
+            });
+
+            // Remove existing coordinate marker if any
+            if (coordinateMarker.current) {
+              mapInstance.current.removeLayer(coordinateMarker.current);
+            }
+
+            // Add marker at user's location
+            coordinateMarker.current = L.marker([lat, lng], {
+              icon: L.icon({
+                iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+                iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
+                shadowSize: [41, 41]
+              })
+            }).addTo(mapInstance.current);
+
+            coordinateMarker.current.bindPopup(`
+              <div class="p-2">
+                <h3 class="font-bold">Your Location</h3>
+                <p><strong>Latitude:</strong> ${lat.toFixed(6)}</p>
+                <p><strong>Longitude:</strong> ${lng.toFixed(6)}</p>
+              </div>
+            `).openPopup();
+
+            toast({
+              title: "Location found",
+              description: "Centered on your current location",
+            });
+          }
+        },
+        (error) => {
+          toast({
+            title: "Location access denied",
+            description: "Unable to get your current location. Please enter coordinates manually.",
+            variant: "destructive",
+          });
+        }
+      );
+    } else {
+      toast({
+        title: "Geolocation not supported",
+        description: "Your browser doesn't support geolocation. Please enter coordinates manually.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <div className="container mx-auto px-4 pt-24 pb-16">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-4">Interactive Map View</h1>
+        <p className="text-muted-foreground text-lg">
+          Visualize groundwater quality data across India with interactive mapping and boundary highlighting
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Map Controls */}
+        <div className="lg:col-span-1 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Search className="w-5 h-5" />
+                Search Location
+              </CardTitle>
+              <CardDescription>
+                Search for states, cities, or districts to zoom to specific areas
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label htmlFor="search">Location</Label>
+                <Input
+                  id="search"
+                  placeholder="e.g., Delhi, Mumbai, Rajasthan..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                />
+              </div>
+              <Button onClick={handleSearch} disabled={isLoading} className="w-full">
+                {isLoading ? "Searching..." : "Search & Zoom"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Navigation className="w-5 h-5" />
+                Go to Coordinates
+              </CardTitle>
+              <CardDescription>
+                Enter latitude and longitude to navigate to a specific location
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="latitude">Latitude</Label>
+                  <Input
+                    id="latitude"
+                    type="number"
+                    step="any"
+                    placeholder="e.g., 28.6139"
+                    value={latitude}
+                    onChange={(e) => setLatitude(e.target.value)}
+                    className="rounded-lg"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="longitude">Longitude</Label>
+                  <Input
+                    id="longitude"
+                    type="number"
+                    step="any"
+                    placeholder="e.g., 77.2090"
+                    value={longitude}
+                    onChange={(e) => setLongitude(e.target.value)}
+                    className="rounded-lg"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Button 
+                  onClick={handleCoordinateSubmit} 
+                  className="w-full rounded-lg transition-all hover:scale-105"
+                  disabled={!latitude || !longitude}
+                >
+                  <MapPin className="w-4 h-4 mr-2" />
+                  Go to Location
+                </Button>
+                <Button 
+                  onClick={getUserLocation} 
+                  variant="outline"
+                  className="w-full rounded-lg transition-all hover:scale-105"
+                >
+                  <Navigation className="w-4 h-4 mr-2" />
+                  Use My Location
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Layers className="w-5 h-5" />
+                Map Legend
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 bg-red-500 rounded-full"></div>
+                <span className="text-sm">High Pollution</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 bg-amber-500 rounded-full"></div>
+                <span className="text-sm">Medium Pollution</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 bg-green-500 rounded-full"></div>
+                <span className="text-sm">Low Pollution</span>
+              </div>
+              <hr className="my-2" />
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-1 bg-primary"></div>
+                <span className="text-sm">State Boundaries</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="w-5 h-5" />
+                Map Information
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="text-sm space-y-2 text-muted-foreground">
+                <li>• Click on markers to view detailed pollution data</li>
+                <li>• Use mouse wheel to zoom in/out</li>
+                <li>• Drag to pan across the map</li>
+                <li>• Search for specific locations above</li>
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Map Container */}
+        <div className="lg:col-span-3">
+          <Card className="h-[600px]">
+            <CardContent className="p-0 h-full">
+              <div ref={mapRef} className="h-full w-full rounded-lg" />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MapView;
